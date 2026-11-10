@@ -1,0 +1,46 @@
+postgresql_versions:
+  '14':
+    postgresql:
+      bookworm:
+        version: 'postgresql-client-14=14.24-1.pgdg12+2'
+      trixie:
+        version: 'postgresql-client-14=14.24-1.pgdg13+2'
+    debian:
+      - 'bookworm'
+      - 'trixie'
+  '15':
+    postgresql:
+      bookworm:
+        version: 'postgresql-client-15=15.19-1.pgdg12+2'
+      trixie:
+        version: 'postgresql-client-15=15.19-1.pgdg13+2'
+    debian:
+      - 'bookworm'
+      - 'trixie'
+  '16':
+    postgresql:
+      bookworm:
+        version: 'postgresql-client-16=16.15-1.pgdg12+2'
+      trixie:
+        version: 'postgresql-client-16=16.15-1.pgdg13+2'
+    debian:
+      - 'bookworm'
+      - 'trixie'
+  '17':
+    postgresql:
+      bookworm:
+        version: 'postgresql-client-17=17.11-1.pgdg12+2'
+      trixie:
+        version: 'postgresql-client-17=17.11-1.pgdg13+2'
+    debian:
+      - 'bookworm'
+      - 'trixie'
+  '18':
+    postgresql:
+      bookworm:
+        version: 'postgresql-client-18=18.6-1.pgdg12+2'
+      trixie:
+        version: 'postgresql-client-18=18.6-1.pgdg13+2'
+    debian:
+      - 'bookworm'
+      - 'trixie'
