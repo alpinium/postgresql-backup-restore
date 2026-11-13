@@ -1,8 +1,13 @@
 name: Build images
 
-# PR          - build + smoke test (amd64 and arm64), no push
-# push main   - build + push all combinations from configuration.yaml as multi-arch images
-# manual      - rebuild (e.g. to pick up Debian security updates)
+# The version of the scripts is in the file VERSION (X.Y.Z), it is part of every image tag.
+#
+# PR        - build + smoke test (amd64 and arm64), no push; when the PR changes anything
+#             that goes into the image, VERSION has to be higher than in the target branch
+# push main - build + push the combinations from configuration.yaml as multi-arch images,
+#             that are not yet published with the current VERSION (checked in GHCR)
+# manual    - build + push all combinations again, even the published ones
+#             (e.g. to pick up Debian security updates)
 on:
   push:
     branches: [main]
@@ -12,7 +17,12 @@ on:
 permissions:
   contents: read
   packages: write
-  id-token: write
+
+# Runs for the same branch wait for each other, so an older run cannot overwrite
+# the image tags published by a newer one
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 # Images are pushed to GHCR (GitHub organization) and to Docker Hub (organization alpiniumtech).
 # Docker Hub login uses repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN.
@@ -30,8 +40,50 @@ jobs:
       include: ${{ steps.load.outputs.include }}
       platforms: ${{ steps.load.outputs.platforms }}
       created: ${{ steps.load.outputs.created }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # A PR is checked out as a merge commit, its first parent is the target branch
+          fetch-depth: 2
+
+      - name: Read VERSION
+        id: version
+        run: |
+          RELEASE=$(cat VERSION)
+          if ! [[ "$RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION \"${RELEASE}\" is not in the format X.Y.Z"
+            exit 1
+          fi
+          echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Version ${RELEASE}"
+
+      # Changes of files that do not go into the image do not need a new version
+      - name: Check VERSION was increased
+        if: github.event_name == 'pull_request'
+        env:
+          RELEASE: ${{ steps.version.outputs.release }}
+        run: |
+          CHANGED=$(git diff --name-only HEAD^1 HEAD \
+            | grep --invert-match --extended-regexp '^(README\.md|LICENSE|debug_script\.sh|aux/.*|\.github/.*)$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No change goes into the image, VERSION does not have to be increased"
+            exit 0
+          fi
+
+          if ! BASE_RELEASE=$(git show HEAD^1:VERSION 2>/dev/null); then
+            echo "The target branch has no VERSION yet"
+            exit 0
+          fi
+
+          echo "Changed files that go into the image:"
+          echo "$CHANGED"
+          HIGHEST=$(printf '%s\n%s\n' "$BASE_RELEASE" "$RELEASE" | sort --version-sort | tail -n 1)
+          if [ "$RELEASE" = "$BASE_RELEASE" ] || [ "$HIGHEST" != "$RELEASE" ]; then
+            echo "VERSION ${RELEASE} has to be higher than ${BASE_RELEASE} in the target branch"
+            exit 1
+          fi
+          echo "VERSION ${BASE_RELEASE} -> ${RELEASE}"
 
       # PostgreSQL client × Debian combinations from configuration.yaml:
       #   postgresql_versions.<major>.postgresql.<debian>.version  - exact package (postgresql-client-<major>=X.Y-Z)
@@ -40,6 +92,9 @@ jobs:
       # and the results are then merged into a single multi-arch manifest.
       - name: Load matrix from configuration.yaml
         id: load
+        env:
+          RELEASE: ${{ steps.version.outputs.release }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PLATFORMS='[
             {"platform": "linux/amd64", "arch": "amd64", "runner": "ubuntu-24.04"},
@@ -81,6 +136,21 @@ jobs:
             exit 1
           fi
 
+          # On push to main, the combinations already published with the current VERSION are skipped
+          if [ "$GITHUB_EVENT_NAME" = 'push' ]; then
+            echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin > /dev/null
+            NEW_TARGETS='[]'
+            while read -r TARGET; do
+              TAG="${GHCR_IMAGE,,}:$(echo "$TARGET" | jq -r '"\(.version)-\(.debian)"')-${RELEASE}"
+              if docker manifest inspect "$TAG" > /dev/null 2>&1; then
+                echo "Already published, skipped: ${TAG}"
+              else
+                NEW_TARGETS=$(echo "$NEW_TARGETS" | jq -c --argjson TARGET "$TARGET" '. + [$TARGET]')
+              fi
+            done < <(echo "$TARGETS" | jq -c '.[]')
+            TARGETS="$NEW_TARGETS"
+          fi
+
           INCLUDE=$(jq -nc --argjson TARGETS "$TARGETS" --argjson PLATFORMS "$PLATFORMS" \
             '[$TARGETS[] as $T | $PLATFORMS[] | $T + .]')
 
@@ -95,6 +165,8 @@ jobs:
   build:
     name: PostgreSQL client ${{ matrix.version }} / Debian ${{ matrix.debian }} / ${{ matrix.arch }}
     needs: matrix
+    # Nothing to build when all combinations are already published
+    if: ${{ needs.matrix.outputs.include != '[]' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -122,6 +194,7 @@ jobs:
           POSTGRESQL_MAJOR: ${{ matrix.postgresql }}
           DEBIAN_CODENAME: ${{ matrix.debian }}
           VCS_REF: ${{ github.sha }}
+          RELEASE_VERSION: ${{ needs.matrix.outputs.release }}
           BUILD_DATE: ${{ needs.matrix.outputs.created }}
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
@@ -216,7 +289,7 @@ jobs:
     needs: [matrix, build]
     # Runs even if some combinations failed - the rest are published,
     # incomplete ones (missing a platform) fail below
-    if: ${{ !cancelled() && needs.matrix.result == 'success' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.matrix.result == 'success' && needs.matrix.outputs.targets != '[]' && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -248,21 +321,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Image tags for commit a1b2c3d (PostgreSQL client 18.6, trixie), in both registries:
-      #   18.6-trixie-a1b2c3d - specific commit
-      #   18.6-trixie         - latest build of the given PostgreSQL client version
-      #   18-trixie           - latest PostgreSQL client version of the major release
+      # Image tags for VERSION 1.2.3 (PostgreSQL client 18.6, trixie), in both registries:
+      #   18.6-trixie-1.2.3 - specific version of the scripts
+      #   18.6-trixie       - latest version of the scripts with the given PostgreSQL client version
+      #   18-trixie         - latest version of the scripts with the latest PostgreSQL client version of the major release
       - name: Compute image tags
         id: meta
+        env:
+          RELEASE: ${{ needs.matrix.outputs.release }}
         run: |
           GHCR_IMAGE="${GHCR_IMAGE,,}"            # registries require lowercase
           DOCKERHUB_IMAGE="${DOCKERHUB_IMAGE,,}"
-          SHA="${GITHUB_SHA::7}"
           FULL="${{ matrix.version }}-${{ matrix.debian }}"
           MAJOR="${{ matrix.postgresql }}-${{ matrix.debian }}"
           TAGS=()
           for IMAGE in "$GHCR_IMAGE" "$DOCKERHUB_IMAGE"; do
-            TAGS+=("${IMAGE}:${FULL}-${SHA}" "${IMAGE}:${FULL}" "${IMAGE}:${MAJOR}")
+            TAGS+=("${IMAGE}:${FULL}-${RELEASE}" "${IMAGE}:${FULL}" "${IMAGE}:${MAJOR}")
           done
           {
             echo "SOURCE_IMAGE=${GHCR_IMAGE}"
@@ -279,6 +353,7 @@ jobs:
           POSTGRESQL_MAJOR: ${{ matrix.postgresql }}
           DEBIAN_CODENAME: ${{ matrix.debian }}
           VCS_REF: ${{ github.sha }}
+          RELEASE_VERSION: ${{ needs.matrix.outputs.release }}
           BUILD_DATE: ${{ needs.matrix.outputs.created }}
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
@@ -323,6 +398,7 @@ jobs:
           {
             echo "### PostgreSQL client ${{ matrix.version }} / Debian ${{ matrix.debian }}"
             echo
+            echo "- version: \`${{ needs.matrix.outputs.release }}\`"
             echo "- commit: \`${{ github.sha }}\`"
             echo "- digest: \`${{ steps.manifest.outputs.digest }}\`"
             echo "- platforms: \`$(echo '${{ needs.matrix.outputs.platforms }}' | jq -r 'join(", ")')\`"

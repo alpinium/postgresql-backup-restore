@@ -56,13 +56,14 @@ fi
 # Same label values as in CI, the commit is marked "-dirty" when there are uncommitted changes
 VCS_REF=$(git -C "$BASE_DIRECTORY" describe --always --dirty --abbrev=40 --match='' 2>/dev/null || true)
 BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+RELEASE_VERSION=$(cat "${BASE_DIRECTORY}/VERSION")
 
 FAILED=()
 SUCCEEDED=()
 while read -r -u 3 POSTGRESQL PACKAGE DEBIAN; do
     PACKAGE_VERSION="${PACKAGE#*=}"
     VERSION="${PACKAGE_VERSION%%-*}"
-    TAG="${IMAGE}:${VERSION}-${DEBIAN}"
+    TAG="${IMAGE}:${VERSION}-${DEBIAN}-${RELEASE_VERSION}"
 
     echo "###########"
     echo "POSTGRESQL_MAJOR: ${POSTGRESQL}"
@@ -81,7 +82,7 @@ while read -r -u 3 POSTGRESQL PACKAGE DEBIAN; do
     echo "DEBIAN_POINT_RELEASE: ${DEBIAN_POINT_RELEASE}"
 
     if ! LABELS=$(POSTGRESQL_VERSION="$VERSION" POSTGRESQL_MAJOR="$POSTGRESQL" DEBIAN_CODENAME="$DEBIAN" \
-        DEBIAN_POINT_RELEASE="$DEBIAN_POINT_RELEASE" VCS_REF="$VCS_REF" BUILD_DATE="$BUILD_DATE" \
+        DEBIAN_POINT_RELEASE="$DEBIAN_POINT_RELEASE" VCS_REF="$VCS_REF" BUILD_DATE="$BUILD_DATE" RELEASE_VERSION="$RELEASE_VERSION" \
         bash "${BASE_DIRECTORY}/labels_script.sh"); then
         FAILED+=("${TAG} (labels)")
         continue
