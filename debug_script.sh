@@ -110,6 +110,7 @@ while read -r -u 3 POSTGRESQL PACKAGE DEBIAN; do
         "/usr/lib/postgresql/${POSTGRESQL}/bin/pg_restore --version | grep -F ' ${VERSION} '"
         "/usr/lib/postgresql/${POSTGRESQL}/bin/psql --version | grep -F ' ${VERSION} '"
         "echo smoke-test | zstd -19 --long=27 | zstd -dc | grep -qxF smoke-test"
+        "printf '* * * * * true\\n' > /tmp/crontab && /usr/local/bin/supercronic -test /tmp/crontab"
         "grep -q VERSION_CODENAME=${DEBIAN} /etc/os-release"
     )
     SMOKE_FAILED=()

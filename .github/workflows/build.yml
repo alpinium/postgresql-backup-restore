@@ -218,6 +218,9 @@ jobs:
           build-args: |
             DEBIAN_CODENAME=${{ matrix.debian }}
             POSTGRESQL_VERSION=${{ matrix.postgresql }}
+          # Raises the GitHub API rate limit in install_script.sh, it is not stored in the image
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
           labels: ${{ steps.labels.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.version }}-${{ matrix.debian }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.version }}-${{ matrix.debian }}-${{ matrix.arch }}
@@ -229,6 +232,7 @@ jobs:
           docker run --rm test-image "${POSTGRESQL_BIN}/pg_restore" --version | grep -F " ${{ matrix.version }} "
           docker run --rm test-image "${POSTGRESQL_BIN}/psql" --version | grep -F " ${{ matrix.version }} "
           docker run --rm test-image sh -c 'echo smoke-test | zstd -19 --long=27 | zstd -dc | grep -qxF smoke-test'
+          docker run --rm test-image sh -c "printf '* * * * * true\\n' > /tmp/crontab && /usr/local/bin/supercronic -test /tmp/crontab"
           docker run --rm test-image grep -q "VERSION_CODENAME=${{ matrix.debian }}" /etc/os-release
           docker run --rm test-image dpkg --print-architecture | grep -qx "${{ matrix.arch }}"
           DEBIAN_POINT_RELEASE=$(docker run --rm test-image cat /etc/debian_version)
@@ -264,6 +268,9 @@ jobs:
           build-args: |
             DEBIAN_CODENAME=${{ matrix.debian }}
             POSTGRESQL_VERSION=${{ matrix.postgresql }}
+          # Raises the GitHub API rate limit in install_script.sh, it is not stored in the image
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
           labels: ${{ steps.labels.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.version }}-${{ matrix.debian }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.version }}-${{ matrix.debian }}-${{ matrix.arch }}
