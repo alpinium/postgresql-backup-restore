@@ -7,7 +7,7 @@ export DEBIAN_FRONTEND="noninteractive"
 
 apt-get update --assume-yes
 apt-get dist-upgrade --assume-yes
-apt-get install --assume-yes --no-install-recommends apt-transport-https ca-certificates curl jq tar tini zstd
+apt-get install --assume-yes --no-install-recommends apt-transport-https ca-certificates curl jq tar zstd
 
 # The GitHub API is called with the token from the build secret github_token when it is given
 # (60 requests per hour without it, 1000 with the GITHUB_TOKEN of GitHub Actions)

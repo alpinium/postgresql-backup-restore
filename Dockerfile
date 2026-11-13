@@ -23,6 +23,6 @@ ADD docker-entrypoint.sh /docker-entrypoint.sh
 
 STOPSIGNAL SIGTERM
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/docker-entrypoint.sh"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
 
 CMD []
